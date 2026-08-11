@@ -1,6 +1,6 @@
 **Azure SQL Managed Instance architecture, networking, service tiers, HA/DR, migration, and production troubleshooting**.
 
-Focus: **SQL Server DBA / Azure DBA interview and real production work**.
+Focus: **SQL Server DBA / Azure DBA interview and real production work**.Part 28
 
 ---
 
@@ -1220,13 +1220,13 @@ Now put everything together.
               |   Application Tier     |
               |          |             |
               |          v             |
-              |   +--------------+    |
-              |   | SQL MI        |    |
-              |   |              |    |
-              |   | SalesDB      |    |
-              |   | CustomerDB   |    |
-              |   | OrdersDB     |    |
-              |   +--------------+    |
+              |   +--------------+     |
+              |   | SQL MI       |     |
+              |   |              |     |
+              |   | SalesDB      |     |
+              |   | CustomerDB   |     |
+              |   | OrdersDB     |     |
+              |   +--------------+     |
               +------------------------+
                            |
                            |
@@ -1332,11 +1332,11 @@ Troubleshooting
 
 ---
 
-# Part 30 — What I recommend we do next
+# Part 30 — Next
 
-Rather than dumping all of Azure SQL MI theory on you, I'd teach you through a **real production project**.
+**Real production project**.
 
-We can build this scenario:
+Build this scenario:
 
 ```text
              COMPANY: ABC RETAIL
