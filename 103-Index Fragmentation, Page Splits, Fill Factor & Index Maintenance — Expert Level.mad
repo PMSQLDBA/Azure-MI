@@ -1,0 +1,1179 @@
+# Lesson 136 — Index Fragmentation, Page Splits, Fill Factor & Index Maintenance — Expert Level
+
+Today we go deeper into what happens **inside index pages when data changes** and why blindly rebuilding indexes is not a good maintenance strategy.
+
+---
+
+## 1. What is index fragmentation?
+
+For rowstore indexes, fragmentation broadly describes how the logical ordering of index pages differs from their physical ordering and how efficiently pages are being utilized.
+
+Two concepts are especially important:
+
+```text
+Logical fragmentation
++
+Page density
+```
+
+These are related, but **not the same thing**.
+
+---
+
+# 2. Logical fragmentation
+
+Imagine an index logically wants:
+
+```text
+Page A → Page B → Page C → Page D
+```
+
+but the pages are physically scattered:
+
+```text
+Page A → Page X → Page B → Page Z → Page C
+```
+
+The logical sequence still exists, but physical storage may be less sequential.
+
+This matters most for workloads involving substantial ordered scans.
+
+---
+
+# 3. Page density
+
+Page density asks a different question:
+
+> **How much useful data is packed into each page?**
+
+Imagine:
+
+```text
+Page 1: ██████████
+Page 2: ██████████
+Page 3: ██████████
+```
+
+versus:
+
+```text
+Page 1: █████
+Page 2: ████
+Page 3: ██████
+Page 4: ███
+Page 5: ████
+```
+
+The second structure requires more pages to store the same amount of information.
+
+---
+
+# 4. Why low page density matters
+
+Suppose an index needs:
+
+```text
+1,000 pages
+```
+
+at high density.
+
+After many changes it needs:
+
+```text
+2,000 pages
+```
+
+to represent approximately the same logical data.
+
+Queries may now require more page reads.
+
+Therefore:
+
+> **Low page density can hurt performance even when logical fragmentation isn't particularly high.**
+
+---
+
+# 5. Page splits
+
+One major source of fragmentation and reduced page density is the **page split**.
+
+Imagine:
+
+```text
+Index page
+┌────────────────────┐
+│ 10 20 30 40 50 60 │
+└────────────────────┘
+```
+
+Now insert:
+
+```text
+35
+```
+
+If there isn't enough free space:
+
+```text
+Full page
+   ↓
+Split
+```
+
+becomes approximately:
+
+```text
+Page A             Page B
+┌───────────┐      ┌───────────┐
+│10 20 30  │      │35 40 50 60│
+└───────────┘      └───────────┘
+```
+
+A new page is required.
+
+---
+
+# 6. Page splits are expensive
+
+A split can involve:
+
+```text
+New page allocation
++
+Moving rows
++
+Updating page links
++
+Logging changes
++
+Potentially updating parent pages
+```
+
+Under heavy write workloads, frequent splits can become expensive.
+
+---
+
+# 7. Why random keys can increase splits
+
+Consider a clustered index:
+
+```text
+ID = 1, 2, 3, 4, 5, ...
+```
+
+New rows usually arrive at the end.
+
+Now compare:
+
+```text
+ID = 58392
+ID = 17
+ID = 9123
+ID = 201
+```
+
+New rows must be inserted throughout the key space.
+
+That creates more opportunities for full-page insertions and splits.
+
+---
+
+# 8. Sequential keys
+
+A sequential clustered key often produces a pattern like:
+
+```text
+Page 1 → Page 2 → Page 3 → New page
+                              ↑
+                         New inserts
+```
+
+This generally reduces random page-split pressure.
+
+But it isn't completely free.
+
+---
+
+# 9. The hot-page problem
+
+If thousands of concurrent sessions are inserting rows at the end of the same index:
+
+```text
+Session 1 ─┐
+Session 2 ─┤
+Session 3 ─┼──→ Last page
+Session 4 ─┤
+Session 5 ─┘
+```
+
+that final area can become a contention point.
+
+So sequential keys trade one type of problem for a different potential problem under extreme concurrency.
+
+---
+
+# 10. Random keys vs sequential keys
+
+A useful conceptual comparison:
+
+| Key pattern | Potential advantage  | Potential issue     |
+| ----------- | -------------------- | ------------------- |
+| Sequential  | Fewer random splits  | Hot insertion point |
+| Random      | Inserts distributed  | More page splits    |
+| Narrow key  | Smaller indexes      | Depends on workload |
+| Wide key    | More key information | Larger indexes      |
+
+There is no universally perfect key.
+
+---
+
+# 11. Fill factor
+
+**Fill factor** controls how full index leaf pages are initially populated during applicable index creation/rebuild operations.
+
+For example:
+
+```text
+100% fill
+██████████
+
+80% fill
+████████░░
+```
+
+The unused space provides room for future inserts.
+
+---
+
+# 12. Why leave free space?
+
+Suppose an index frequently inserts values into the middle of pages.
+
+With:
+
+```text
+100% fill
+```
+
+there is little room for new entries.
+
+With:
+
+```text
+80% fill
+```
+
+there may initially be space available.
+
+That can reduce immediate page splitting.
+
+---
+
+# 13. But lower fill factor has a cost
+
+If you set:
+
+```text
+Fill factor = 70%
+```
+
+you intentionally create more empty space.
+
+That means:
+
+```text
+More pages
+↓
+More storage
+↓
+More I/O
+↓
+Potentially more memory pressure
+```
+
+So lower isn't automatically better.
+
+---
+
+# 14. Fill factor is not a fragmentation cure
+
+This is a common misconception:
+
+> "My index is fragmented, so I'll set fill factor to 50%."
+
+That can make things worse.
+
+Fill factor is primarily a strategy for **future page growth behavior**, not a magic switch for eliminating existing fragmentation.
+
+---
+
+# 15. Fill factor is most relevant to specific workloads
+
+It can be useful when:
+
+```text
+Frequent random inserts
++
+Known page-split pressure
++
+A measurable performance problem
+```
+
+It is less compelling when the workload is mostly:
+
+```text
+Append-only
+```
+
+because inserts naturally occur near the end.
+
+---
+
+# 16. The 100% myth
+
+Many people assume:
+
+```text
+100% fill = best performance
+```
+
+Not always.
+
+A fuller index usually means:
+
+```text
+Fewer pages
+```
+
+which can be beneficial.
+
+But if that fullness causes constant page splits, the write workload may suffer.
+
+It's a tradeoff.
+
+---
+
+# 17. The 50% myth
+
+Likewise:
+
+```text
+50% fill = fewer page splits = best
+```
+
+Not necessarily.
+
+You might reduce some future splits while doubling the number of pages.
+
+Then queries have to read more pages.
+
+---
+
+# 18. Find the actual problem first
+
+Before changing fill factor, ask:
+
+```text
+Are page splits actually occurring frequently?
+Which index?
+Which workload?
+Which operation causes them?
+Are they hurting performance?
+Would additional free space meaningfully help?
+```
+
+---
+
+# 19. Rebuild vs reorganize
+
+Two common index-maintenance operations are:
+
+```text
+ALTER INDEX ... REBUILD
+```
+
+and:
+
+```text
+ALTER INDEX ... REORGANIZE
+```
+
+They are not interchangeable.
+
+---
+
+# 20. REORGANIZE
+
+Reorganize is an online operation that incrementally reorganizes leaf-level pages.
+
+Conceptually:
+
+```text
+Messy index
+   ↓
+Small incremental corrections
+   ↓
+More organized index
+```
+
+It generally uses fewer resources at a time than a full rebuild, though it can take a long time on large structures.
+
+---
+
+# 21. REBUILD
+
+Rebuild essentially reconstructs the index.
+
+Conceptually:
+
+```text
+Existing index
+      ↓
+New organized structure
+      ↓
+Replace/rebuild
+```
+
+It can provide a more comprehensive restructuring opportunity.
+
+Depending on SQL Server edition/version/options, rebuild behavior and concurrency characteristics vary.
+
+---
+
+# 22. Rebuild can change fill factor
+
+A rebuild can apply a specified fill factor.
+
+For example:
+
+```sql id="4n2c8m"
+ALTER INDEX IX_Orders_Customer
+ON dbo.Orders
+REBUILD
+WITH (FILLFACTOR = 90);
+```
+
+This affects how the rebuilt structure is initially populated.
+
+---
+
+# 23. REORGANIZE doesn't work the same way
+
+A reorganize isn't simply:
+
+> "A smaller rebuild."
+
+It is an incremental process with different behavior and limitations.
+
+Therefore:
+
+```text
+REBUILD
+≠
+REORGANIZE
+```
+
+---
+
+# 24. Rebuild has broader consequences
+
+A rebuild can affect:
+
+```text
+Index structure
+Statistics
+Logging
+CPU
+I/O
+Transaction log
+Concurrency
+```
+
+The exact behavior depends on how the operation is performed and the SQL Server version/configuration.
+
+---
+
+# 25. Statistics side effect
+
+Index rebuilds can update the statistics associated with the rebuilt index in ways that matter to query optimization.
+
+This is another reason a rebuild can sometimes be followed by a plan change.
+
+Remember the chain from Lesson 134:
+
+```text
+Statistics
+ ↓
+Cardinality estimate
+ ↓
+Plan
+```
+
+---
+
+# 26. Reorganize vs statistics
+
+A reorganize should not be treated as equivalent to a statistics update.
+
+If your actual problem is:
+
+```text
+Stale statistics
+```
+
+then:
+
+```text
+REORGANIZE
+```
+
+isn't a substitute for appropriate statistics maintenance.
+
+---
+
+# 27. Fragmentation thresholds
+
+You'll often see maintenance scripts such as:
+
+```text
+0–5%     → nothing
+5–30%    → reorganize
+>30%     → rebuild
+```
+
+These are **heuristics**, not universal laws.
+
+They may be reasonable starting points in some environments, but shouldn't be treated as SQL Server's official rules for performance.
+
+---
+
+# 28. Why thresholds can mislead
+
+Consider:
+
+```text
+Index A
+10,000 pages
+90% fragmentation
+```
+
+versus:
+
+```text
+Index B
+20 pages
+90% fragmentation
+```
+
+The percentage is identical.
+
+The practical impact may be radically different.
+
+---
+
+# 29. Page count matters
+
+Fragmentation becomes more meaningful when considered alongside:
+
+```text
+Page count
+Scan workload
+I/O characteristics
+Page density
+Query frequency
+Storage subsystem
+```
+
+A tiny fragmented index may not matter at all.
+
+---
+
+# 30. Scan-heavy vs seek-heavy workload
+
+Logical fragmentation tends to matter more for:
+
+```text
+Large ordered scans
+```
+
+than for:
+
+```text
+Highly selective seeks
+```
+
+A selective seek may touch only a handful of pages regardless of the overall logical fragmentation percentage.
+
+---
+
+# 31. SSD changes the equation
+
+Modern storage, especially SSD/NVMe, can reduce the performance penalty associated with physical random I/O.
+
+That doesn't make fragmentation irrelevant.
+
+But it means old rules based on spinning disks shouldn't automatically be applied unchanged.
+
+---
+
+# 32. Buffer pool changes the equation too
+
+If the relevant index pages are already in memory:
+
+```text
+Buffer pool
+   ↓
+Memory access
+```
+
+physical storage ordering matters less.
+
+Again:
+
+> **Measure the workload rather than assuming fragmentation equals slowness.**
+
+---
+
+# 33. Rebuild cost
+
+A large index rebuild can consume substantial:
+
+```text
+CPU
+I/O
+Memory
+Transaction log
+TempDB/resources
+```
+
+depending on operation and configuration.
+
+If you rebuild every index every night, you may be spending enormous resources to solve a problem that doesn't exist.
+
+---
+
+# 34. Maintenance can become the workload
+
+Imagine:
+
+```text
+00:00 → rebuild indexes
+01:00 → rebuild indexes
+02:00 → rebuild indexes
+...
+```
+
+Meanwhile your database spends significant resources maintaining indexes instead of serving users.
+
+That's backwards.
+
+Maintenance should support the workload, not dominate it.
+
+---
+
+# 35. Fragmentation and availability
+
+Large maintenance operations can affect concurrency.
+
+Depending on SQL Server version, edition, and options, online index operations may provide better concurrency characteristics than offline operations.
+
+But "online" does not mean "zero impact."
+
+---
+
+# 36. Online doesn't mean free
+
+An online operation can still consume:
+
+```text
+CPU
+I/O
+Memory
+Log
+Locks at various stages
+```
+
+and may have its own restrictions.
+
+Always understand the operational behavior before scheduling large index maintenance.
+
+---
+
+# 37. Resumable index operations
+
+Modern SQL Server versions support resumable index operations in applicable scenarios.
+
+This is useful for large environments where maintenance needs to be:
+
+```text
+Paused
+Resumed
+Scheduled
+Throttled
+```
+
+rather than treated as one enormous uninterrupted operation.
+
+---
+
+# 38. Compression interaction
+
+Indexes can also use compression where supported.
+
+Compression can reduce:
+
+```text
+Storage
+I/O
+Buffer-pool footprint
+```
+
+but may increase CPU requirements.
+
+This is another example of:
+
+```text
+Storage/I/O
+      ↕
+CPU
+```
+
+being a tradeoff.
+
+---
+
+# 39. Index maintenance and statistics strategy
+
+Don't mix these questions:
+
+### Question A
+
+> Is the index structure causing a problem?
+
+### Question B
+
+> Are the statistics accurate enough?
+
+They can overlap, but they are different maintenance concerns.
+
+---
+
+# 40. Example troubleshooting
+
+You see:
+
+```text
+Query suddenly became slow.
+```
+
+Someone says:
+
+> "Rebuild all indexes."
+
+Instead investigate:
+
+```text
+1. Did the execution plan change?
+2. Did estimates change?
+3. Did statistics change?
+4. Did data volume/distribution change?
+5. Is there actual fragmentation?
+6. Are logical reads higher?
+7. Is blocking involved?
+8. Is memory pressure involved?
+```
+
+Only then choose maintenance.
+
+---
+
+# 41. Page splits vs fragmentation
+
+These are related but shouldn't be treated as synonyms.
+
+### Page split
+
+An event occurring when a page cannot accommodate an insertion/update in its current structure and SQL Server must redistribute entries.
+
+### Fragmentation
+
+A state/property of the resulting index organization.
+
+You can have:
+
+```text
+Page splits → fragmentation/density changes
+```
+
+but the concepts aren't identical.
+
+---
+
+# 42. Updates can cause splits too
+
+It's easy to think:
+
+> "Only INSERT causes page splits."
+
+Not necessarily.
+
+An update that increases the size of an indexed row or index entry can require additional space and contribute to page-splitting behavior.
+
+---
+
+# 43. Variable-width columns
+
+Consider an index containing variable-width values.
+
+An update:
+
+```text
+Before:
+'ABC'
+
+After:
+'ABCXXXXXXXXXXXXXXXXXXXXXXXX'
+```
+
+may require additional page space.
+
+If the page cannot accommodate it, SQL Server has to deal with the space requirement.
+
+This is one reason data-change patterns matter.
+
+---
+
+# 44. Clustered index page splits
+
+A clustered index page split can affect the actual row-storage structure.
+
+That makes clustered-key design particularly important.
+
+A poor clustered key can therefore have system-wide consequences.
+
+---
+
+# 45. Nonclustered index page splits
+
+Nonclustered indexes can experience splits independently.
+
+If you have:
+
+```text
+10 nonclustered indexes
+```
+
+you effectively have:
+
+```text
+10 additional structures
+```
+
+that may experience their own maintenance behavior.
+
+---
+
+# 46. One bad index can hurt writes
+
+Suppose one nonclustered index is:
+
+```text
+Huge
++
+Randomly inserted
++
+Rarely queried
+```
+
+It may impose substantial write overhead without providing meaningful read value.
+
+This is a strong candidate for investigation.
+
+---
+
+# 47. Index lifecycle
+
+Think of an index as having a lifecycle:
+
+```text
+Create
+ ↓
+Used by workload
+ ↓
+Data changes
+ ↓
+Pages evolve
+ ↓
+Statistics evolve
+ ↓
+Performance changes
+ ↓
+Measure
+ ↓
+Maintain / modify / remove
+```
+
+Index management is not:
+
+```text
+Create once
++
+Forget forever
+```
+
+---
+
+# 48. Expert maintenance strategy
+
+A better strategy is:
+
+```text
+Monitor
+   ↓
+Identify problematic indexes
+   ↓
+Understand workload
+   ↓
+Measure fragmentation/density
+   ↓
+Measure query impact
+   ↓
+Choose REORGANIZE / REBUILD / nothing
+   ↓
+Update statistics separately when needed
+   ↓
+Measure again
+```
+
+---
+
+# 49. A practical decision model
+
+Think in terms of:
+
+```text
+Is the index large?
+        ↓
+Does the workload scan it heavily?
+        ↓
+Is page density poor?
+        ↓
+Is fragmentation affecting I/O?
+        ↓
+Is maintenance cost justified?
+```
+
+If the answer is mostly "no":
+
+> **Do nothing.**
+
+Doing nothing is a valid optimization decision.
+
+---
+
+# 50. Example: tiny index
+
+Suppose:
+
+```text
+Index size = 12 pages
+Fragmentation = 95%
+```
+
+You probably shouldn't schedule a major rebuild merely because the percentage looks scary.
+
+The index is tiny.
+
+The maintenance operation may cost more than any possible benefit.
+
+---
+
+# 51. Example: giant scan-heavy index
+
+Suppose:
+
+```text
+Index = 2 TB
+Pages = enormous
+Large reporting scans
+Poor page density
+High logical reads
+```
+
+Now index structure can be much more relevant.
+
+A carefully planned maintenance operation could potentially have meaningful impact.
+
+---
+
+# 52. Example: seek-heavy index
+
+Suppose:
+
+```text
+Index = 500 GB
+Fragmentation = 70%
+```
+
+but queries mostly perform:
+
+```text
+Highly selective seeks
+```
+
+and performance is excellent.
+
+Don't rebuild just because:
+
+```text
+70%
+```
+
+looks high.
+
+---
+
+# 53. Interview question
+
+### "What causes page splits?"
+
+Strong answer:
+
+> "Page splits occur when an index page doesn't have enough space for an insertion or size-increasing change, requiring SQL Server to redistribute entries across pages and allocate or modify pages. Random insert patterns and insufficient free space can increase the likelihood."
+
+---
+
+# 54. Interview question
+
+### "What is fill factor?"
+
+Strong answer:
+
+> "Fill factor specifies how full index pages should initially be populated during applicable index creation or rebuild operations, leaving free space that may accommodate future changes and potentially reduce page splits."
+
+---
+
+# 55. Interview question
+
+### "Should you rebuild indexes whenever fragmentation exceeds 30%?"
+
+Strong answer:
+
+> "Not automatically. Fragmentation percentage is only one metric. Page count, page density, scan workload, storage characteristics, query impact, and maintenance cost should all be considered."
+
+---
+
+# 56. Interview question
+
+### "REBUILD vs REORGANIZE?"
+
+Strong answer:
+
+> "REORGANIZE incrementally reorganizes the leaf-level structure, while REBUILD reconstructs the index. Rebuild is more comprehensive but generally more resource-intensive. The appropriate choice depends on index size, workload, maintenance window, and actual performance impact."
+
+---
+
+# 57. The biggest misconception
+
+Don't think:
+
+```text
+Fragmentation
+   ↓
+Slow query
+```
+
+as a guaranteed relationship.
+
+The real chain is:
+
+```text
+Index structure
+       ↓
+I/O / page density / ordering
+       ↓
+Actual workload
+       ↓
+Observed performance
+```
+
+Fragmentation is only one possible contributor.
+
+---
+
+# 58. Expert mental model
+
+When someone tells you:
+
+> "The index is fragmented."
+
+Your next questions should be:
+
+```text
+How large is it?
+How fragmented?
+What is page density?
+Is it scan-heavy?
+Are logical reads high?
+Is the storage subsystem sensitive to ordering?
+Is performance actually degraded?
+What does maintenance cost?
+```
+
+That is much stronger than simply saying:
+
+> "Rebuild it."
+
+---
+
+# 59. Lesson 136 takeaway
+
+Remember these four concepts:
+
+```text
+PAGE SPLIT
+   ↓
+A structural event caused by insufficient page space
+
+FRAGMENTATION
+   ↓
+A property of index organization
+
+PAGE DENSITY
+   ↓
+How efficiently pages are packed
+
+FILL FACTOR
+   ↓
+How much free space is intentionally left during applicable builds/rebuilds
+```
+
+And the most important operational rule:
+
+> **Don't perform index maintenance because a percentage looks bad. Perform it when the index's physical state is demonstrably hurting the workload enough to justify the maintenance cost.**
+
+### The complete expert loop
+
+```text
+DATA CHANGES
+     ↓
+PAGE UTILIZATION CHANGES
+     ↓
+PAGE SPLITS / FRAGMENTATION
+     ↓
+POSSIBLE I/O IMPACT
+     ↓
+MEASURE QUERY PERFORMANCE
+     ↓
+DECIDE:
+ ┌───────────────┐
+ │ DO NOTHING    │
+ │ REORGANIZE    │
+ │ REBUILD       │
+ └───────────────┘
+     ↓
+MEASURE AGAIN
+```
+
+**Next: Lesson 137 — Execution Plans Deep Dive: Operators, Cost, Properties, Parallelism & Reading Plans Like a Performance Engineer.**
