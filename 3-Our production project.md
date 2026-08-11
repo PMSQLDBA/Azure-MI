@@ -1,4 +1,4 @@
-**hands-on Azure SQL Managed Instance DBA Notes**, using one realistic production environment throughout.
+**Hands-on Azure SQL Managed Instance DBA Notes** using one realistic production environment throughout.
 
 ## Lesson 1 — Our production project
 
