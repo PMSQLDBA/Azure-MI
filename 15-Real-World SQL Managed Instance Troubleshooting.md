@@ -861,8 +861,7 @@ Impact:
 Order API latency > 10 seconds.
 
 Root cause:
-New query introduced by application deployment performed
-a large table scan.
+New query introduced by application deployment performed a large table scan.
 
 Evidence:
 Query Store showed increased CPU and a new execution plan.
