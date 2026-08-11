@@ -1,30 +1,19 @@
-
 # ☁️ Azure SQL Managed Instance — 150-Lesson Roadmap
 
 ### Phase 1 — Azure & Cloud Foundations
 
 **1–10**
 
-1.  Azure fundamentals
-    
-2.  Azure subscriptions & resource groups
-    
-3.  Regions & availability zones
-    
-4.  Azure Resource Manager
-    
-5.  Azure Portal / CLI / PowerShell
-    
-6.  Azure networking fundamentals
-    
-7.  VNets & subnets
-    
-8.  NSGs & routing
-    
-9.  Private networking concepts
-    
-10.  Azure identity fundamentals
-     
+1.  Azure fundamentals    
+2.  Azure subscriptions & resource groups    
+3.  Regions & availability zones    
+4.  Azure Resource Manager    
+5.  Azure Portal / CLI / PowerShell    
+6.  Azure networking fundamentals    
+7.  VNets & subnets    
+8.  NSGs & routing    
+9.  Private networking concepts    
+10.  Azure identity fundamentals     
 
 ### Phase 2 — Azure SQL Family & MI Fundamentals
 
